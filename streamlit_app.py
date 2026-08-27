@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -75,21 +76,23 @@ MODELS = {
     "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
 }
 
-# Devanagari & Multilingual Entity Knowledge Base
+# High-Precision Hindi Devanagari & Multilingual Entity Knowledge Base for FIR/Legal Texts
 HINDI_DEVNAGARI_ENTITIES = {
     "PER": [
-        "श्रीमती सुनिता देवी", "सुनिता देवी", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", "राहुल गांधी", "सचिन", "विराट कोहली",
-        "एलोन मस्क", "बिल गेट्स", "स्टीव जॉब्स", "मार्क जुकरबर्ग", "रतन टाटा", "मुकेश अंबानी", "राम कुमार", "श्याम",
-        "shubham", "narendra modi", "modi", "sundar pichai", "pichai", "elon musk", "musk", "sunita devi"
+        "श्रीमती सुनिता देवी", "सुनिता देवी", "राहुल कुमार", "शुभम कुमार", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", 
+        "राहुल गांधी", "सचिन तेंदुलकर", "सचिन", "विराट कोहली", "एलोन मस्क", "बिल गेट्स", "स्टीव जॉब्स", "मार्क जुकरबर्ग", 
+        "रतन टाटा", "मुकेश अंबानी", "राम कुमार", "श्याम", "अजय कुमार", "विजय सिंह", "राकेश शर्मा",
+        "shubham", "narendra modi", "modi", "sundar pichai", "pichai", "elon musk", "musk", "sunita devi", "rahul kumar"
     ],
     "LOC": [
-        "नई दिल्ली", "दिल्ली", "भारत", "मुंबई", "अमेरिका", "कैलिफोर्निया", "उत्तर प्रदेश", "बिहार",
-        "राजस्थान", "कोलकाता", "चेन्नई", "बेंगलुरु", "हैदराबाद", "पुणे", "उत्तराखंड", "पंजाब",
-        "delhi", "new delhi", "india", "mumbai", "california", "united states", "usa"
+        "सिविल लाइंस", "नई दिल्ली", "दिल्ली", "कानपुर", "लखनऊ", "वाराणसी", "प्रयागराज", "आगरा", "मेरठ", "नोएडा", 
+        "गाजियाबाद", "उत्तर प्रदेश", "बिहार", "राजस्थान", "उत्तराखंड", "पंजाब", "भारत", "मुंबई", "कोलकाता", 
+        "चेन्नई", "बेंगलुरु", "हैदराबाद", "पुणे", "अमेरिका", "कैलिफोर्निया",
+        "delhi", "new delhi", "india", "mumbai", "california", "united states", "usa", "kanpur", "uttar pradesh"
     ],
     "ORG": [
         "गूगल ऑफिस", "गूगल", "माइक्रोसॉफ्ट", "टेस्ला", "स्पेसएक्स", "इसरो", "टाटा", "रिलायंस", "विप्रो", "इन्फोसिस",
-        "भारतीय रेल", "आईआईटी", "एम्स", "ऐप्पल", "अमेज़न",
+        "भारतीय रेल", "आईआईटी", "एम्स", "ऐप्पल", "अमेज़न", "पुलिस थाना", "उच्च न्यायालय", "सर्वोच्च न्यायालय",
         "microsoft", "google", "tesla", "spacex", "isro", "tata", "reliance"
     ]
 }
@@ -110,10 +113,40 @@ def get_ner_pipeline(model_choice):
 def extract_all_entities(text, model_choice):
     if not text or not text.strip():
         return []
+    
     entities = []
-    found_words = set()
+    found_spans = []
+    text_lower = text.lower()
 
-    # A. Transformers BERT Pipeline
+    # 1. High-Precision Devanagari & Indic Entity Extractor
+    all_dict_matches = []
+    for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
+        sorted_terms = sorted(terms, key=len, reverse=True)
+        for term in sorted_terms:
+            term_lower = term.lower()
+            pattern = re.escape(term_lower)
+            for match in re.finditer(pattern, text_lower):
+                start, end = match.span()
+                if not any(s <= start < e or s < end <= e for s, e in found_spans):
+                    orig_word = text[start:end]
+                    all_dict_matches.append({
+                        "word": orig_word,
+                        "entity_group": cat,
+                        "score": 0.98,
+                        "start": start,
+                        "end": end
+                    })
+                    found_spans.append((start, end))
+
+    # Add dictionary matches in text order
+    for m in sorted(all_dict_matches, key=lambda x: x['start']):
+        entities.append({
+            "word": m["word"],
+            "entity_group": m["entity_group"],
+            "score": m["score"]
+        })
+
+    # 2. Transformers BERT Pipeline with Confidence Threshold (>60%) & Noise Filtering
     try:
         ner_pipe = get_ner_pipeline(model_choice)
         if ner_pipe is not None:
@@ -121,33 +154,26 @@ def extract_all_entities(text, model_choice):
             for ent in raw_res:
                 w = str(ent.get("word", "")).strip()
                 lbl = str(ent.get("entity_group", ent.get("entity", "")))
-                sc = float(ent.get("score", 0.95))
-                if w and lbl != "O" and len(w) > 1:
-                    found_words.add(w.lower())
-                    entities.append({
-                        "word": w,
-                        "entity_group": lbl,
-                        "score": sc
-                    })
+                sc = float(ent.get("score", 0.0))
+                
+                w_clean = re.sub(r'^[#\s,.]+|[#\s,.]+$', '', w)
+                stopwords = ["साथ", "में", "ने", "की", "का", "के", "थाना", "कि", "हुई", "दर्ज", "कराई", "उसके"]
+                
+                if (w_clean and 
+                    lbl != "O" and 
+                    sc >= 0.60 and 
+                    not w_clean.startswith("##") and 
+                    len(w_clean) > 1 and 
+                    w_clean.lower() not in stopwords):
+                    
+                    if not any(w_clean.lower() == e["word"].lower() for e in entities):
+                        entities.append({
+                            "word": w_clean,
+                            "entity_group": lbl,
+                            "score": sc
+                        })
     except Exception as e:
-        print(f"Transformers NER Notice: {e}")
-
-    # B. Devanagari Hindi & Multilingual Knowledge Base
-    text_lower = text.lower()
-    for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
-        sorted_terms = sorted(terms, key=len, reverse=True)
-        for term in sorted_terms:
-            term_lower = term.lower()
-            if term_lower in text_lower:
-                if not any(term_lower in fw for fw in found_words):
-                    idx = text_lower.find(term_lower)
-                    orig_term = text[idx:idx+len(term)]
-                    found_words.add(term_lower)
-                    entities.append({
-                        "word": orig_term,
-                        "entity_group": cat,
-                        "score": 0.965
-                    })
+        print(f"Transformers NER Filtering Notice: {e}")
 
     return entities
 
@@ -196,7 +222,7 @@ with col_input:
     
     direct_text = st.text_area(
         "Or Enter Document Text Directly",
-        value="गवाह श्रीमती सुनिता देवी निवासी नई दिल्ली ने बताया कि घटना के समय वह गूगल ऑफिस के पास उपस्थित थीं।",
+        value="राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।",
         height=130
     )
     
@@ -235,11 +261,7 @@ with col_output:
 
             # 2. Run NER Extraction
             with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
-                try:
-                    raw_entities = extract_all_entities(extracted_text, model_choice)
-                except Exception as e:
-                    st.error(f"NER Extraction Error: {e}")
-                    raw_entities = []
+                raw_entities = extract_all_entities(extracted_text, model_choice)
 
             st.subheader("🏷️ Highlighted Entities")
             
