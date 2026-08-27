@@ -1,8 +1,9 @@
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
 streamlit
 transformers
 torch
-paddlepaddle>=2.6.0
-paddleocr>=2.7.0
+paddlepaddle
+paddleocr
 pillow
 numpy<2.0.0
 pandas
