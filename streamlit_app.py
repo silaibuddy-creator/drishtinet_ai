@@ -196,14 +196,33 @@ with col_output:
         # 1. Run OCR
         if uploaded_file is not None:
             with st.spinner("Running OCR text recognition..."):
+                ocr_success = False
+                # Try PaddleOCR first
                 try:
-                    import easyocr
-                    reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
+                    from paddleocr import PaddleOCR
+                    ocr = PaddleOCR(lang=lang_code, use_angle_cls=True, enable_mkldnn=False, show_log=False)
                     img_np = np.array(Image.open(uploaded_file))
-                    res = reader.readtext(img_np, detail=0)
-                    extracted_text = "\n".join(res)
+                    res = ocr.ocr(img_np, cls=True)
+                    lines = []
+                    if res and res[0]:
+                        for line in res[0]:
+                            lines.append(line[1][0])
+                    extracted_text = "\n".join(lines)
+                    ocr_success = True
                 except Exception as e:
-                    st.error(f"OCR Processing Error: {e}")
+                    print(f"PaddleOCR notice: {e}")
+
+                # Try EasyOCR fallback if PaddleOCR not present
+                if not ocr_success:
+                    try:
+                        import easyocr
+                        reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
+                        img_np = np.array(Image.open(uploaded_file))
+                        res = reader.readtext(img_np, detail=0)
+                        extracted_text = "\n".join(res)
+                        ocr_success = True
+                    except Exception as e2:
+                        st.error(f"OCR Processing Error: {e2}")
 
         # Combine with direct text
         if direct_text and direct_text.strip():
