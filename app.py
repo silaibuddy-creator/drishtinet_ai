@@ -1,5 +1,6 @@
 import io
 import re
+import base64
 import requests
 import numpy as np
 import pandas as pd
@@ -100,16 +101,30 @@ HINDI_DEVNAGARI_ENTITIES = {
 
 def perform_ocr_on_image(image_file, lang_code="hi"):
     try:
+        # Base64 encode image payload
         image_bytes = image_file.getvalue()
+        b64_str = 'data:image/jpeg;base64,' + base64.b64encode(image_bytes).decode('utf-8')
+        
         url = 'https://api.ocr.space/parse/image'
-        ocr_lang = 'hin' if lang_code == "hi" else 'eng'
+        
+        # Pass 1: Try language='hin' or 'eng'
         payload = {
             'apikey': 'helloworld',
-            'language': ocr_lang,
+            'language': 'hin' if lang_code == "hi" else 'eng',
+            'base64Image': b64_str,
             'isOverlayRequired': False
         }
-        files = {'file': ('image.jpg', image_bytes, 'image/jpeg')}
-        resp = requests.post(url, data=payload, files=files, timeout=12)
+        resp = requests.post(url, data=payload, timeout=12)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
+                parsed_text = res_json['ParsedResults'][0].get('ParsedText', '').strip()
+                if parsed_text:
+                    return parsed_text
+                    
+        # Pass 2: Try language='eng' fallback
+        payload['language'] = 'eng'
+        resp = requests.post(url, data=payload, timeout=12)
         if resp.status_code == 200:
             res_json = resp.json()
             if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
@@ -246,8 +261,8 @@ with col_output:
             
             # 2. Use direct text if entered
             if direct_text and direct_text.strip():
-                if extracted_text:
-                    extracted_text = direct_text.strip() + "\n" + extracted_text
+                if extracted_text and uploaded_file is not None:
+                    extracted_text = extracted_text + "\n" + direct_text.strip()
                 else:
                     extracted_text = direct_text.strip()
 
