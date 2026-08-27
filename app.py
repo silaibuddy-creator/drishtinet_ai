@@ -1,5 +1,4 @@
 import os
-import torch
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -71,28 +70,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 1. Load OCR Engine (EasyOCR PyTorch backend with PaddleOCR fallback)
-@st.cache_resource(show_spinner="Loading OCR Recognition Engine (Hindi & English)...")
+# Fine-Tuned Models Dictionary
+MODELS = {
+    "mBERT (Multilingual BERT)": "triptune/drishtinet-mbert",
+    "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
+}
+
+# 1. Load EasyOCR Engine
+@st.cache_resource(show_spinner=False)
 def load_ocr_engine(lang="hi"):
     try:
         import easyocr
         lang_list = ['hi', 'en'] if lang == "hi" else ['en']
         return easyocr.Reader(lang_list, gpu=False)
     except Exception as e:
-        try:
-            from paddleocr import PaddleOCR
-            return PaddleOCR(lang=lang, use_angle_cls=True, enable_mkldnn=False, show_log=False)
-        except Exception as e2:
-            st.error(f"OCR load error: {e2}")
-            return None
+        print(f"EasyOCR load error: {e}")
+        return None
 
 # 2. Load Fine-Tuned Transformers NER Pipelines
-MODELS = {
-    "mBERT (Multilingual BERT)": "triptune/drishtinet-mbert",
-    "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
-}
-
-@st.cache_resource(show_spinner="Loading fine-tuned NER Transformers model...")
+@st.cache_resource(show_spinner=False)
 def load_ner_pipeline(model_choice):
     model_repo = MODELS[model_choice]
     try:
@@ -104,7 +100,7 @@ def load_ner_pipeline(model_choice):
         from transformers import pipeline
         return pipeline("ner", model="bert-base-multilingual-cased", aggregation_strategy="simple")
 
-# Header
+# Header UI
 st.markdown("""
 <div class="main-header">
     <h1>👁️ DrishtiNet AI</h1>
@@ -117,7 +113,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar Options
+# Sidebar
 st.sidebar.header("⚙️ Configuration")
 ocr_lang = st.sidebar.selectbox("OCR Language Model", ["Hindi (Devanagari)", "English"], index=0)
 lang_code = "hi" if "Hindi" in ocr_lang else "en"
@@ -142,7 +138,7 @@ with col_input:
     
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image Preview", use_container_width=True)
+        st.image(image, caption="Uploaded Image Preview")
     
     direct_text = st.text_area(
         "Or Enter Document Text Directly",
@@ -150,7 +146,7 @@ with col_input:
         height=130
     )
     
-    process_btn = st.button("🚀 Process OCR & Extract Entities", type="primary", use_container_width=True)
+    process_btn = st.button("🚀 Process OCR & Extract Entities", type="primary")
 
 with col_output:
     st.header("📊 Extraction Results")
@@ -163,19 +159,12 @@ with col_output:
             with st.spinner("Running OCR text recognition..."):
                 try:
                     ocr = load_ocr_engine(lang_code)
-                    img_np = np.array(Image.open(uploaded_file))
-                    if hasattr(ocr, 'readtext'):
-                        # EasyOCR
+                    if ocr is not None:
+                        img_np = np.array(Image.open(uploaded_file))
                         res = ocr.readtext(img_np, detail=0)
                         extracted_text = "\n".join(res)
-                    elif hasattr(ocr, 'ocr'):
-                        # PaddleOCR
-                        res = ocr.ocr(img_np, cls=True)
-                        lines = []
-                        if res and res[0]:
-                            for line in res[0]:
-                                lines.append(line[1][0])
-                        extracted_text = "\n".join(lines)
+                    else:
+                        extracted_text = "OCR engine initializing..."
                 except Exception as e:
                     st.error(f"OCR Processing Error: {e}")
 
@@ -194,8 +183,12 @@ with col_output:
 
             # 2. Run NER Extraction
             with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
-                ner_pipe = load_ner_pipeline(model_choice)
-                raw_entities = ner_pipe(extracted_text) if ner_pipe else []
+                try:
+                    ner_pipe = load_ner_pipeline(model_choice)
+                    raw_entities = ner_pipe(extracted_text) if ner_pipe else []
+                except Exception as e:
+                    st.error(f"NER Error: {e}")
+                    raw_entities = []
 
             st.subheader("🏷️ Highlighted Entities")
             
@@ -223,6 +216,6 @@ with col_output:
             st.subheader("📋 Detected Entities Detail Table")
             if table_rows:
                 df = pd.DataFrame(table_rows)
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df)
             else:
                 st.info("No PER, LOC, or ORG entities detected in the text.")
