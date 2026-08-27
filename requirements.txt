@@ -2,8 +2,6 @@ streamlit
 transformers
 torch
 easyocr
-paddleocr
-paddlepaddle
 pillow
 numpy<2.0.0
 pandas
