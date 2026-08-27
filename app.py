@@ -80,7 +80,7 @@ MODELS = {
 # Devanagari & Multilingual Entity Dictionary
 HINDI_DEVNAGARI_ENTITIES = {
     "PER": [
-        "सुनिता देवी", "श्रीमती सुनिता देवी", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", "राहुल गांधी", "सचिन", "विराट कोहली",
+        "श्रीमती सुनिता देवी", "सुनिता देवी", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", "राहुल गांधी", "सचिन", "विराट कोहली",
         "एलोन मस्क", "बिल गेट्स", "स्टीव जॉब्स", "मार्क जुकरबर्ग", "रतन टाटा", "मुकेश अंबानी", "राम कुमार", "श्याम",
         "shubham", "narendra modi", "modi", "sundar pichai", "pichai", "elon musk", "musk", "sunita devi"
     ],
@@ -90,7 +90,7 @@ HINDI_DEVNAGARI_ENTITIES = {
         "delhi", "new delhi", "india", "mumbai", "california", "united states", "usa"
     ],
     "ORG": [
-        "गूगल", "गूगल ऑफिस", "माइक्रोसॉफ्ट", "टेस्ला", "स्पेसएक्स", "इसरो", "टाटा", "रिलायंस", "विप्रो", "इन्फोसिस",
+        "गूगल ऑफिस", "गूगल", "माइक्रोसॉफ्ट", "टेस्ला", "स्पेसएक्स", "इसरो", "टाटा", "रिलायंस", "विप्रो", "इन्फोसिस",
         "भारतीय रेल", "आईआईटी", "एम्स", "ऐप्पल", "अमेज़न",
         "microsoft", "google", "tesla", "spacex", "isro", "tata", "reliance"
     ]
@@ -121,6 +121,8 @@ def load_ner_pipeline(model_choice):
         return pipeline("ner", model="bert-base-multilingual-cased", aggregation_strategy="simple")
 
 def extract_all_entities(text, model_choice):
+    if not text or not text.strip():
+        return []
     entities = []
     found_words = set()
 
@@ -144,20 +146,21 @@ def extract_all_entities(text, model_choice):
         print(f"Transformers NER Notice: {e}")
 
     # B. Run Devanagari Hindi & Multilingual Knowledge Extractor
-    text_lower = text.toLowerCase() if hasattr(text, 'toLowerCase') else text.lower()
+    text_lower = text.lower()
     for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
-        for term in terms:
+        sorted_terms = sorted(terms, key=len, reverse=True)
+        for term in sorted_terms:
             term_lower = term.lower()
-            if term_lower in text_lower and term_lower not in found_words:
-                # Find original casing from text
-                idx = text_lower.find(term_lower)
-                orig_term = text[idx:idx+len(term)]
-                found_words.add(term_lower)
-                entities.append({
-                    "word": orig_term,
-                    "entity_group": cat,
-                    "score": 0.965
-                })
+            if term_lower in text_lower:
+                if not any(term_lower in fw for fw in found_words):
+                    idx = text_lower.find(term_lower)
+                    orig_term = text[idx:idx+len(term)]
+                    found_words.add(term_lower)
+                    entities.append({
+                        "word": orig_term,
+                        "entity_group": cat,
+                        "score": 0.965
+                    })
 
     return entities
 
