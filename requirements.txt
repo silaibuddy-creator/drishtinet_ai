@@ -3,6 +3,6 @@ transformers
 torch
 easyocr
 pillow
-numpy<2.0.0
+numpy
 pandas
 opencv-python-headless
