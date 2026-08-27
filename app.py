@@ -69,13 +69,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Fine-Tuned Models Dictionary
+# Models Dictionary
 MODELS = {
     "mBERT (Multilingual BERT)": "triptune/drishtinet-mbert",
     "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
 }
 
-# Devanagari & Multilingual Entity Dictionary
+# Devanagari & Multilingual Entity Knowledge Base
 HINDI_DEVNAGARI_ENTITIES = {
     "PER": [
         "श्रीमती सुनिता देवी", "सुनिता देवी", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", "राहुल गांधी", "सचिन", "विराट कोहली",
@@ -94,21 +94,33 @@ HINDI_DEVNAGARI_ENTITIES = {
     ]
 }
 
+def get_ner_pipeline(model_choice):
+    try:
+        from transformers import pipeline
+        repo = MODELS.get(model_choice, "bert-base-multilingual-cased")
+        return pipeline("ner", model=repo, aggregation_strategy="simple")
+    except Exception as e:
+        try:
+            from transformers import pipeline
+            return pipeline("ner", model="bert-base-multilingual-cased", aggregation_strategy="simple")
+        except Exception as e2:
+            print(f"Fallback NER error: {e2}")
+            return None
+
 def extract_all_entities(text, model_choice):
     if not text or not text.strip():
         return []
     entities = []
     found_words = set()
 
-    # A. Run Transformers BERT Pipeline
+    # A. Transformers BERT Pipeline
     try:
-        from transformers import pipeline
-        ner_pipe = pipeline("ner", model=MODELS.get(model_choice, "bert-base-multilingual-cased"), aggregation_strategy="simple")
-        if ner_pipe:
+        ner_pipe = get_ner_pipeline(model_choice)
+        if ner_pipe is not None:
             raw_res = ner_pipe(text)
             for ent in raw_res:
-                w = ent.get("word", "").strip()
-                lbl = ent.get("entity_group", ent.get("entity", ""))
+                w = str(ent.get("word", "")).strip()
+                lbl = str(ent.get("entity_group", ent.get("entity", "")))
                 sc = float(ent.get("score", 0.95))
                 if w and lbl != "O" and len(w) > 1:
                     found_words.add(w.lower())
@@ -120,7 +132,7 @@ def extract_all_entities(text, model_choice):
     except Exception as e:
         print(f"Transformers NER Notice: {e}")
 
-    # B. Run Devanagari Hindi & Multilingual Knowledge Extractor
+    # B. Devanagari Hindi & Multilingual Knowledge Base
     text_lower = text.lower()
     for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
         sorted_terms = sorted(terms, key=len, reverse=True)
@@ -176,8 +188,11 @@ with col_input:
     uploaded_file = st.file_uploader("Upload FIR or Document Image", type=["png", "jpg", "jpeg", "webp"])
     
     if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image Preview")
+        try:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Uploaded Image Preview")
+        except Exception as img_err:
+            st.error(f"Image load error: {img_err}")
     
     direct_text = st.text_area(
         "Or Enter Document Text Directly",
@@ -196,33 +211,14 @@ with col_output:
         # 1. Run OCR
         if uploaded_file is not None:
             with st.spinner("Running OCR text recognition..."):
-                ocr_success = False
-                # Try PaddleOCR first
                 try:
-                    from paddleocr import PaddleOCR
-                    ocr = PaddleOCR(lang=lang_code, use_angle_cls=True, enable_mkldnn=False, show_log=False)
+                    import easyocr
+                    reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
                     img_np = np.array(Image.open(uploaded_file))
-                    res = ocr.ocr(img_np, cls=True)
-                    lines = []
-                    if res and res[0]:
-                        for line in res[0]:
-                            lines.append(line[1][0])
-                    extracted_text = "\n".join(lines)
-                    ocr_success = True
+                    res = reader.readtext(img_np, detail=0)
+                    extracted_text = "\n".join(res)
                 except Exception as e:
-                    print(f"PaddleOCR notice: {e}")
-
-                # Try EasyOCR fallback if PaddleOCR not present
-                if not ocr_success:
-                    try:
-                        import easyocr
-                        reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
-                        img_np = np.array(Image.open(uploaded_file))
-                        res = reader.readtext(img_np, detail=0)
-                        extracted_text = "\n".join(res)
-                        ocr_success = True
-                    except Exception as e2:
-                        st.error(f"OCR Processing Error: {e2}")
+                    st.error(f"OCR Processing Error: {e}")
 
         # Combine with direct text
         if direct_text and direct_text.strip():
@@ -239,7 +235,11 @@ with col_output:
 
             # 2. Run NER Extraction
             with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
-                raw_entities = extract_all_entities(extracted_text, model_choice)
+                try:
+                    raw_entities = extract_all_entities(extracted_text, model_choice)
+                except Exception as e:
+                    st.error(f"NER Extraction Error: {e}")
+                    raw_entities = []
 
             st.subheader("🏷️ Highlighted Entities")
             
