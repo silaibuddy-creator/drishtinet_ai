@@ -127,7 +127,12 @@ def extract_all_entities(text, model_choice):
             pattern = re.escape(term_lower)
             for match in re.finditer(pattern, text_lower):
                 start, end = match.span()
-                if not any(s <= start < e or s < end <= e for s, e in found_spans):
+                overlaps = False
+                for span_start, span_end in found_spans:
+                    if not (end <= span_start or start >= span_end):
+                        overlaps = True
+                        break
+                if not overlaps:
                     orig_word = text[start:end]
                     all_dict_matches.append({
                         "word": orig_word,
@@ -232,63 +237,66 @@ with col_output:
     st.header("📊 Extraction Results")
     
     if process_btn:
-        extracted_text = ""
-        
-        # 1. Run OCR
-        if uploaded_file is not None:
-            with st.spinner("Running OCR text recognition..."):
-                try:
-                    import easyocr
-                    reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
-                    img_np = np.array(Image.open(uploaded_file))
-                    res = reader.readtext(img_np, detail=0)
-                    extracted_text = "\n".join(res)
-                except Exception as e:
-                    st.error(f"OCR Processing Error: {e}")
+        try:
+            extracted_text = ""
+            
+            # 1. Run OCR
+            if uploaded_file is not None:
+                with st.spinner("Running OCR text recognition..."):
+                    try:
+                        import easyocr
+                        reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
+                        img_np = np.array(Image.open(uploaded_file))
+                        res = reader.readtext(img_np, detail=0)
+                        extracted_text = "\n".join(res)
+                    except Exception as e:
+                        st.error(f"OCR Processing Error: {e}")
 
-        # Combine with direct text
-        if direct_text and direct_text.strip():
-            if extracted_text:
-                extracted_text += "\n" + direct_text.strip()
+            # Combine with direct text
+            if direct_text and direct_text.strip():
+                if extracted_text:
+                    extracted_text += "\n" + direct_text.strip()
+                else:
+                    extracted_text = direct_text.strip()
+
+            if not extracted_text:
+                st.warning("No text extracted. Please upload a clear image or enter text above.")
             else:
-                extracted_text = direct_text.strip()
+                st.subheader("📝 Extracted Document Text (OCR)")
+                st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
 
-        if not extracted_text:
-            st.warning("No text extracted. Please upload a clear image or enter text above.")
-        else:
-            st.subheader("📝 Extracted Document Text (OCR)")
-            st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
+                # 2. Run NER Extraction
+                with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
+                    raw_entities = extract_all_entities(extracted_text, model_choice)
 
-            # 2. Run NER Extraction
-            with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
-                raw_entities = extract_all_entities(extracted_text, model_choice)
-
-            st.subheader("🏷️ Highlighted Entities")
-            
-            highlight_html = extracted_text
-            table_rows = []
-            
-            for ent in raw_entities:
-                word = ent.get("word", "")
-                group = ent.get("entity_group", ent.get("entity", ""))
-                score = round(float(ent.get("score", 0)) * 100, 2)
+                st.subheader("🏷️ Highlighted Entities")
                 
-                if word and group != "O":
-                    css_class = f"entity-tag-{group.lower()}" if group.lower() in ["per", "org", "loc"] else "entity-tag-per"
-                    tag_badge = f'<span class="{css_class}">{word} <sub>{group}</sub></span>'
-                    highlight_html = highlight_html.replace(word, tag_badge)
+                highlight_html = extracted_text
+                table_rows = []
+                
+                for ent in raw_entities:
+                    word = ent.get("word", "")
+                    group = ent.get("entity_group", ent.get("entity", ""))
+                    score = round(float(ent.get("score", 0)) * 100, 2)
                     
-                    table_rows.append({
-                        "Entity": word,
-                        "Category": group,
-                        "Confidence Score": f"{score}%"
-                    })
+                    if word and group != "O":
+                        css_class = f"entity-tag-{group.lower()}" if group.lower() in ["per", "org", "loc"] else "entity-tag-per"
+                        tag_badge = f'<span class="{css_class}">{word} <sub>{group}</sub></span>'
+                        highlight_html = highlight_html.replace(word, tag_badge)
+                        
+                        table_rows.append({
+                            "Entity": word,
+                            "Category": group,
+                            "Confidence Score": f"{score}%"
+                        })
 
-            st.markdown(f'<div style="background:rgba(15, 23, 42, 0.6); padding:1.25rem; border-radius:12px; line-height:2.2;">{highlight_html}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:rgba(15, 23, 42, 0.6); padding:1.25rem; border-radius:12px; line-height:2.2;">{highlight_html}</div>', unsafe_allow_html=True)
 
-            st.subheader("📋 Detected Entities Detail Table")
-            if table_rows:
-                df = pd.DataFrame(table_rows)
-                st.dataframe(df)
-            else:
-                st.info("No PER, LOC, or ORG entities detected in the text.")
+                st.subheader("📋 Detected Entities Detail Table")
+                if table_rows:
+                    df = pd.DataFrame(table_rows)
+                    st.dataframe(df)
+                else:
+                    st.info("No PER, LOC, or ORG entities detected in the text.")
+        except Exception as main_err:
+            st.error(f"Execution Error: {main_err}")
