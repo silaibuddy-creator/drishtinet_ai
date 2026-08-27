@@ -1,5 +1,4 @@
 import os
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -9,8 +8,7 @@ from PIL import Image
 st.set_page_config(
     page_title="DrishtiNet AI — Multilingual Legal Document OCR & Entity Extraction",
     page_icon="👁️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # Custom CSS styling
@@ -96,30 +94,6 @@ HINDI_DEVNAGARI_ENTITIES = {
     ]
 }
 
-# 1. Load EasyOCR Engine
-@st.cache_resource(show_spinner=False)
-def load_ocr_engine(lang="hi"):
-    try:
-        import easyocr
-        lang_list = ['hi', 'en'] if lang == "hi" else ['en']
-        return easyocr.Reader(lang_list, gpu=False)
-    except Exception as e:
-        print(f"OCR engine load error: {e}")
-        return None
-
-# 2. Load Fine-Tuned Transformers NER Pipelines
-@st.cache_resource(show_spinner=False)
-def load_ner_pipeline(model_choice):
-    model_repo = MODELS[model_choice]
-    try:
-        from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
-        tokenizer = AutoTokenizer.from_pretrained(model_repo)
-        model = AutoModelForTokenClassification.from_pretrained(model_repo)
-        return pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
-    except Exception as e:
-        from transformers import pipeline
-        return pipeline("ner", model="bert-base-multilingual-cased", aggregation_strategy="simple")
-
 def extract_all_entities(text, model_choice):
     if not text or not text.strip():
         return []
@@ -128,7 +102,8 @@ def extract_all_entities(text, model_choice):
 
     # A. Run Transformers BERT Pipeline
     try:
-        ner_pipe = load_ner_pipeline(model_choice)
+        from transformers import pipeline
+        ner_pipe = pipeline("ner", model=MODELS.get(model_choice, "bert-base-multilingual-cased"), aggregation_strategy="simple")
         if ner_pipe:
             raw_res = ner_pipe(text)
             for ent in raw_res:
@@ -222,14 +197,11 @@ with col_output:
         if uploaded_file is not None:
             with st.spinner("Running OCR text recognition..."):
                 try:
-                    ocr = load_ocr_engine(lang_code)
-                    if ocr is not None:
-                        img_np = np.array(Image.open(uploaded_file))
-                        if hasattr(ocr, 'readtext'):
-                            res = ocr.readtext(img_np, detail=0)
-                            extracted_text = "\n".join(res)
-                    else:
-                        extracted_text = "OCR engine initializing..."
+                    import easyocr
+                    reader = easyocr.Reader(['hi', 'en'] if lang_code == "hi" else ['en'], gpu=False)
+                    img_np = np.array(Image.open(uploaded_file))
+                    res = reader.readtext(img_np, detail=0)
+                    extracted_text = "\n".join(res)
                 except Exception as e:
                     st.error(f"OCR Processing Error: {e}")
 
