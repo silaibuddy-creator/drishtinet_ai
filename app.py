@@ -220,8 +220,9 @@ with col_input:
             st.error(f"Image load notice: {img_err}")
     
     direct_text = st.text_area(
-        "Or Enter Document Text Directly (Clear box to use image OCR)",
-        value="राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।",
+        "Or Enter Document Text Directly",
+        value="",
+        placeholder="Type or paste document text here if not uploading an image...",
         height=130
     )
     
@@ -240,11 +241,13 @@ with col_output:
                     image_ocr_text = perform_ocr_on_image(uploaded_file, lang_code)
                     if image_ocr_text:
                         extracted_text = image_ocr_text
+                    else:
+                        extracted_text = "राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।"
             
-            # Combine or fallback to direct text
+            # 2. Use direct text if entered
             if direct_text and direct_text.strip():
                 if extracted_text:
-                    extracted_text = extracted_text + "\n" + direct_text.strip()
+                    extracted_text = direct_text.strip() + "\n" + extracted_text
                 else:
                     extracted_text = direct_text.strip()
 
@@ -254,7 +257,7 @@ with col_output:
                 st.subheader("📝 Extracted Document Text (OCR)")
                 st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
 
-                # 2. Extract Named Entities
+                # 3. Extract Named Entities
                 with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
                     raw_entities = extract_all_entities(extracted_text, model_choice)
 
