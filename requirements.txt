@@ -1,8 +1,5 @@
 streamlit
-transformers
-torch
-easyocr
+pandas
 pillow
 numpy
-pandas
-opencv-python-headless
+requests
