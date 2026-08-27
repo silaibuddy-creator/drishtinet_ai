@@ -1,4 +1,6 @@
+import io
 import re
+import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -75,7 +77,7 @@ MODELS = {
     "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
 }
 
-# High-Precision Hindi Devanagari & Multilingual Entity Knowledge Base for FIR/Legal Texts
+# High-Precision Hindi Devanagari & Multilingual Entity Knowledge Base for FIR/Legal/ID Texts
 HINDI_DEVNAGARI_ENTITIES = {
     "PER": [
         "श्रीमती सुनिता देवी", "सुनिता देवी", "राहुल कुमार", "शुभम कुमार", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", 
@@ -95,6 +97,28 @@ HINDI_DEVNAGARI_ENTITIES = {
         "microsoft", "google", "tesla", "spacex", "isro", "tata", "reliance"
     ]
 }
+
+def perform_ocr_on_image(image_file, lang_code="hi"):
+    try:
+        image_bytes = image_file.getvalue()
+        url = 'https://api.ocr.space/parse/image'
+        ocr_lang = 'hin' if lang_code == "hi" else 'eng'
+        payload = {
+            'apikey': 'helloworld',
+            'language': ocr_lang,
+            'isOverlayRequired': False
+        }
+        files = {'file': ('image.jpg', image_bytes, 'image/jpeg')}
+        resp = requests.post(url, data=payload, files=files, timeout=12)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
+                parsed_text = res_json['ParsedResults'][0].get('ParsedText', '').strip()
+                if parsed_text:
+                    return parsed_text
+    except Exception as e:
+        print(f"OCR API Notice: {e}")
+    return ""
 
 def extract_all_entities(text, model_choice="mBERT"):
     if not text or not text.strip():
@@ -169,6 +193,7 @@ st.markdown("""
 # Sidebar
 st.sidebar.header("⚙️ Configuration")
 ocr_lang = st.sidebar.selectbox("OCR Language Model", ["Hindi (Devanagari)", "English"], index=0)
+lang_code = "hi" if "Hindi" in ocr_lang else "en"
 model_choice = st.sidebar.selectbox("NER Model Architecture", list(MODELS.keys()), index=0)
 
 st.sidebar.markdown("---")
@@ -185,7 +210,7 @@ col_input, col_output = st.columns(2)
 with col_input:
     st.header("📄 Document & Image Input")
     
-    uploaded_file = st.file_uploader("Upload FIR or Document Image", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_file = st.file_uploader("Upload FIR, ID Card or Document Image", type=["png", "jpg", "jpeg", "webp"])
     
     if uploaded_file is not None:
         try:
@@ -195,7 +220,7 @@ with col_input:
             st.error(f"Image load notice: {img_err}")
     
     direct_text = st.text_area(
-        "Or Enter Document Text Directly",
+        "Or Enter Document Text Directly (Clear box to use image OCR)",
         value="राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।",
         height=130
     )
@@ -209,11 +234,19 @@ with col_output:
         try:
             extracted_text = ""
             
-            # Combine image text and direct text
+            # 1. Perform Image OCR if uploaded
+            if uploaded_file is not None:
+                with st.spinner("Extracting text from uploaded image (OCR)..."):
+                    image_ocr_text = perform_ocr_on_image(uploaded_file, lang_code)
+                    if image_ocr_text:
+                        extracted_text = image_ocr_text
+            
+            # Combine or fallback to direct text
             if direct_text and direct_text.strip():
-                extracted_text = direct_text.strip()
-            elif uploaded_file is not None:
-                extracted_text = "राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।"
+                if extracted_text:
+                    extracted_text = extracted_text + "\n" + direct_text.strip()
+                else:
+                    extracted_text = direct_text.strip()
 
             if not extracted_text:
                 st.warning("No text extracted. Please upload a clear image or enter text above.")
@@ -221,8 +254,9 @@ with col_output:
                 st.subheader("📝 Extracted Document Text (OCR)")
                 st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
 
-                # Instant NER Extraction (0.001 sec, 100% crash proof)
-                raw_entities = extract_all_entities(extracted_text, model_choice)
+                # 2. Extract Named Entities
+                with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
+                    raw_entities = extract_all_entities(extracted_text, model_choice)
 
                 st.subheader("🏷️ Highlighted Entities")
                 
