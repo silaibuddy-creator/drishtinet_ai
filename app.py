@@ -110,33 +110,40 @@ def clean_entity_str(w):
     tokens = [t for t in w.strip().split() if t not in ROLE_WORDS]
     return ' '.join(tokens)
 
-def perform_ocr_on_image(image_file, lang_code="hi"):
+def perform_ocr_on_file(uploaded_file, lang_code="hi"):
     try:
-        image_bytes = image_file.getvalue()
-        b64_str = 'data:image/jpeg;base64,' + base64.b64encode(image_bytes).decode('utf-8')
+        file_bytes = uploaded_file.getvalue()
         url = 'https://api.ocr.space/parse/image'
+        ocr_lang = 'hin' if lang_code == "hi" else 'eng'
+        
+        is_pdf = uploaded_file.name.lower().endswith('.pdf') or uploaded_file.type == 'application/pdf'
+        file_ext = 'PDF' if is_pdf else 'JPG'
+        mime_type = 'application/pdf' if is_pdf else 'image/jpeg'
+        
         payload = {
             'apikey': 'helloworld',
-            'language': 'hin' if lang_code == "hi" else 'eng',
-            'base64Image': b64_str,
+            'language': ocr_lang,
+            'filetype': file_ext,
             'isOverlayRequired': False
         }
-        resp = requests.post(url, data=payload, timeout=12)
+        files = {'file': (uploaded_file.name, file_bytes, mime_type)}
+        resp = requests.post(url, data=payload, files=files, timeout=15)
         if resp.status_code == 200:
             res_json = resp.json()
             if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
-                parsed_text = res_json['ParsedResults'][0].get('ParsedText', '').strip()
-                if parsed_text:
-                    return parsed_text
+                parsed_texts = [r.get('ParsedText', '').strip() for r in res_json['ParsedResults'] if r.get('ParsedText', '').strip()]
+                if parsed_texts:
+                    return "\n\n".join(parsed_texts)
                     
+        # Pass 2: English fallback
         payload['language'] = 'eng'
-        resp = requests.post(url, data=payload, timeout=12)
+        resp = requests.post(url, data=payload, files=files, timeout=15)
         if resp.status_code == 200:
             res_json = resp.json()
             if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
-                parsed_text = res_json['ParsedResults'][0].get('ParsedText', '').strip()
-                if parsed_text:
-                    return parsed_text
+                parsed_texts = [r.get('ParsedText', '').strip() for r in res_json['ParsedResults'] if r.get('ParsedText', '').strip()]
+                if parsed_texts:
+                    return "\n\n".join(parsed_texts)
     except Exception as e:
         print(f"OCR API Notice: {e}")
     return ""
@@ -149,7 +156,6 @@ def extract_all_entities(text, model_choice="mBERT"):
     text_lower = text.lower()
 
     # 1. Devanagari FIR Context & Grammar Rules (PER, LOC, ORG)
-    # A. Person Name Patterns
     for m in re.finditer(r'(?:श्री|श्रीमती|कुमारी|डॉ\.|डॉक्टर|वादी|अभियुक्त|गवाह|पीड़ित|प्रार्थी)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,}){1,2})', text):
         w = clean_entity_str(m.group(1))
         if w and len(w) > 1:
@@ -160,13 +166,11 @@ def extract_all_entities(text, model_choice="mBERT"):
         if w and len(w) > 1:
             raw_matches.append((m.start(1), m.end(1), w, 'PER', 0.96))
 
-    # B. Location Patterns
     for m in re.finditer(r'(?:थाना|ग्राम|शहर|जिला|प्रदेश|मोहल्ला|चौक|निवासी)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,})?)', text):
         w = clean_entity_str(m.group(1))
         if w and len(w) > 1:
             raw_matches.append((m.start(1), m.end(1), w, 'LOC', 0.96))
 
-    # C. Organization Patterns
     for m in re.finditer(r'([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,})*\s+(?:बैंक|लिमिटेड|विभाग|बोर्ड|कंपनी|अस्पताल|पुलिस थाना|कारपोरेशन))', text):
         w = clean_entity_str(m.group(1))
         if w and len(w) > 1:
@@ -193,10 +197,8 @@ def extract_all_entities(text, model_choice="mBERT"):
                   ("ORG" if any(org in w_lower for org in ["google", "microsoft", "bank", "corp", "isro", "tata", "ltd"]) else "PER")
             raw_matches.append((m.start(1), m.end(1), w, cat, 0.95))
 
-    # Sort all matches by start index
     sorted_matches = sorted(raw_matches, key=lambda x: (x[0], -(x[1] - x[0])))
 
-    # Deduplicate overlapping spans & words
     final_entities = []
     seen_spans = []
     seen_words = set()
@@ -227,7 +229,7 @@ st.markdown("""
     <p style="color:#94a3b8; font-size:1.1rem;">Multilingual Legal Document OCR (Hindi & English) & Entity Extraction Platform</p>
     <div>
         <span class="badge">100% Free 24/7 Hosting</span>
-        <span class="badge">Hindi Devanagari & English</span>
+        <span class="badge">PDF & Image OCR</span>
         <span class="badge">Fine-Tuned mBERT & MuRIL</span>
     </div>
 </div>
@@ -253,14 +255,17 @@ col_input, col_output = st.columns(2)
 with col_input:
     st.header("📄 Document & Image Input")
     
-    uploaded_file = st.file_uploader("Upload FIR, ID Card or Document Image", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_file = st.file_uploader("Upload FIR, ID Card, Document Image or PDF", type=["png", "jpg", "jpeg", "webp", "pdf"])
     
     if uploaded_file is not None:
-        try:
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Image Preview")
-        except Exception as img_err:
-            st.error(f"Image load notice: {img_err}")
+        if uploaded_file.name.lower().endswith(".pdf") or uploaded_file.type == "application/pdf":
+            st.info(f"📄 Uploaded PDF Document: **{uploaded_file.name}**")
+        else:
+            try:
+                image = Image.open(uploaded_file)
+                st.image(image, caption="Uploaded Image Preview")
+            except Exception as img_err:
+                st.error(f"Image load notice: {img_err}")
     
     direct_text = st.text_area(
         "Or Enter Document Text Directly",
@@ -278,24 +283,25 @@ with col_output:
         try:
             extracted_text = ""
             
-            # 1. Perform Image OCR if uploaded
+            # 1. Perform PDF or Image OCR if uploaded
             if uploaded_file is not None:
-                with st.spinner("Extracting text from uploaded image (OCR)..."):
-                    image_ocr_text = perform_ocr_on_image(uploaded_file, lang_code)
-                    if image_ocr_text:
-                        extracted_text = image_ocr_text
+                file_type_label = "PDF document" if uploaded_file.name.lower().endswith(".pdf") else "image"
+                with st.spinner(f"Extracting text from uploaded {file_type_label} (OCR)..."):
+                    file_ocr_text = perform_ocr_on_file(uploaded_file, lang_code)
+                    if file_ocr_text:
+                        extracted_text = file_ocr_text
                     else:
                         extracted_text = "दिनांक 15/08/2026 को वादी श्री रमेश कुमार निवासी ग्राम रामपुर, थाना कोतवाली, जिला लखनऊ ने उपस्थित आकर रिपोर्ट दर्ज कराई कि अभियुक्त विजय सिंह पिता रामलाल निवासी सिविल लाइंस, कानपुर ने भारतीय स्टेट बैंक के पास उनके साथ मारपीट की।"
             
             # 2. Use direct text if entered
             if direct_text and direct_text.strip():
                 if extracted_text and uploaded_file is not None:
-                    extracted_text = direct_text.strip() + "\n" + extracted_text
+                    extracted_text = direct_text.strip() + "\n\n" + extracted_text
                 else:
                     extracted_text = direct_text.strip()
 
             if not extracted_text:
-                st.warning("No text extracted. Please upload a clear image or enter text above.")
+                st.warning("No text extracted. Please upload a clear image/PDF or enter text above.")
             else:
                 st.subheader("📝 Extracted Document Text (OCR)")
                 st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
