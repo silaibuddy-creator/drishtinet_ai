@@ -1,5 +1,6 @@
 import io
 import re
+import json
 import base64
 import requests
 import numpy as np
@@ -75,7 +76,8 @@ st.markdown("""
 # Models Dictionary
 MODELS = {
     "mBERT (Multilingual BERT)": "triptune/drishtinet-mbert",
-    "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
+    "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril",
+    "Gemini 1.5 Multimodal AI (Recommended)": "gemini-1.5-flash"
 }
 
 # Known Knowledge Base Entities
@@ -110,12 +112,58 @@ def clean_entity_str(w):
     tokens = [t for t in w.strip().split() if t not in ROLE_WORDS]
     return ' '.join(tokens)
 
+def process_with_gemini_pool(file_bytes, mime_type, text_prompt, api_keys):
+    b64_data = base64.b64encode(file_bytes).decode('utf-8') if file_bytes else ""
+    prompt_text = """
+You are an expert Multilingual Legal Document OCR and Named Entity Recognition (NER) system for Hindi (Devanagari) and English FIR documents.
+Extract all text from the document/image accurately.
+Identify and classify named entities into PER (Person), LOC (Location), and ORG (Organization).
+
+Return output strictly in JSON format:
+{
+  "extracted_text": "Full extracted text from image/document...",
+  "entities": [
+    {"word": "Entity Name", "category": "PER", "score": 0.98}
+  ]
+}
+"""
+    if text_prompt and text_prompt.strip():
+        prompt_text += f"\n\nDocument Text:\n{text_prompt}"
+
+    # Rotate through API Key Pool
+    for key in api_keys:
+        if not key or not key.strip():
+            continue
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key.strip()}"
+            headers = {"Content-Type": "application/json"}
+            parts = [{"text": prompt_text}]
+            if b64_data and mime_type:
+                parts.insert(0, {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": b64_data
+                    }
+                })
+            payload = {
+                "contents": [{"parts": parts}],
+                "generationConfig": {"response_mime_type": "application/json"}
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            if resp.status_code == 200:
+                res_data = resp.json()
+                text_content = res_data['candidates'][0]['content']['parts'][0]['text']
+                return json.loads(text_content)
+        except Exception as e:
+            print(f"Gemini Key notice: {e}")
+            continue
+    return None
+
 def perform_ocr_on_file(uploaded_file, lang_code="hi"):
     try:
         file_bytes = uploaded_file.getvalue()
         url = 'https://api.ocr.space/parse/image'
         ocr_lang = 'hin' if lang_code == "hi" else 'eng'
-        
         is_pdf = uploaded_file.name.lower().endswith('.pdf') or uploaded_file.type == 'application/pdf'
         file_ext = 'PDF' if is_pdf else 'JPG'
         mime_type = 'application/pdf' if is_pdf else 'image/jpeg'
@@ -134,16 +182,6 @@ def perform_ocr_on_file(uploaded_file, lang_code="hi"):
                 parsed_texts = [r.get('ParsedText', '').strip() for r in res_json['ParsedResults'] if r.get('ParsedText', '').strip()]
                 if parsed_texts:
                     return "\n\n".join(parsed_texts)
-                    
-        # Pass 2: English fallback
-        payload['language'] = 'eng'
-        resp = requests.post(url, data=payload, files=files, timeout=15)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            if 'ParsedResults' in res_json and len(res_json['ParsedResults']) > 0:
-                parsed_texts = [r.get('ParsedText', '').strip() for r in res_json['ParsedResults'] if r.get('ParsedText', '').strip()]
-                if parsed_texts:
-                    return "\n\n".join(parsed_texts)
     except Exception as e:
         print(f"OCR API Notice: {e}")
     return ""
@@ -155,7 +193,7 @@ def extract_all_entities(text, model_choice="mBERT"):
     raw_matches = []
     text_lower = text.lower()
 
-    # 1. Devanagari FIR Context & Grammar Rules (PER, LOC, ORG)
+    # 1. Devanagari FIR Context & Grammar Rules
     for m in re.finditer(r'(?:श्री|श्रीमती|कुमारी|डॉ\.|डॉक्टर|वादी|अभियुक्त|गवाह|पीड़ित|प्रार्थी)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,}){1,2})', text):
         w = clean_entity_str(m.group(1))
         if w and len(w) > 1:
@@ -176,7 +214,7 @@ def extract_all_entities(text, model_choice="mBERT"):
         if w and len(w) > 1:
             raw_matches.append((m.start(1), m.end(1), w, 'ORG', 0.95))
 
-    # 2. Knowledge Base Entity Matches (Devanagari & Transliterated)
+    # 2. Knowledge Base Entity Matches
     for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
         sorted_terms = sorted(terms, key=len, reverse=True)
         for term in sorted_terms:
@@ -231,6 +269,7 @@ st.markdown("""
         <span class="badge">100% Free 24/7 Hosting</span>
         <span class="badge">PDF & Image OCR</span>
         <span class="badge">Fine-Tuned mBERT & MuRIL</span>
+        <span class="badge">Gemini Multimodal AI Pool</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -240,6 +279,13 @@ st.sidebar.header("⚙️ Configuration")
 ocr_lang = st.sidebar.selectbox("OCR Language Model", ["Hindi (Devanagari)", "English"], index=0)
 lang_code = "hi" if "Hindi" in ocr_lang else "en"
 model_choice = st.sidebar.selectbox("NER Model Architecture", list(MODELS.keys()), index=0)
+
+with st.sidebar.expander("🔑 Gemini AI API Pool (Optional)", expanded=False):
+    st.caption("Enter 1 to 3 free Gemini API Keys for load balancing & multi-key failover:")
+    key_1 = st.text_input("Gemini API Key #1", type="password", key="k1")
+    key_2 = st.text_input("Gemini API Key #2", type="password", key="k2")
+    key_3 = st.text_input("Gemini API Key #3", type="password", key="k3")
+    api_key_pool = [k.strip() for k in [key_1, key_2, key_3] if k and k.strip()]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
@@ -282,33 +328,56 @@ with col_output:
     if process_btn:
         try:
             extracted_text = ""
-            
-            # 1. Perform PDF or Image OCR if uploaded
-            if uploaded_file is not None:
-                file_type_label = "PDF document" if uploaded_file.name.lower().endswith(".pdf") else "image"
-                with st.spinner(f"Extracting text from uploaded {file_type_label} (OCR)..."):
-                    file_ocr_text = perform_ocr_on_file(uploaded_file, lang_code)
-                    if file_ocr_text:
-                        extracted_text = file_ocr_text
+            raw_entities = []
+            used_gemini = False
+
+            # Check if Gemini API Pool is configured
+            if api_key_pool:
+                with st.spinner("Processing document via Gemini Multimodal AI Pool..."):
+                    file_bytes = uploaded_file.getvalue() if uploaded_file else None
+                    mime_type = ("application/pdf" if uploaded_file.name.lower().endswith(".pdf") else "image/jpeg") if uploaded_file else None
+                    
+                    gemini_res = process_with_gemini_pool(file_bytes, mime_type, direct_text, api_key_pool)
+                    if gemini_res and isinstance(gemini_res, dict):
+                        extracted_text = gemini_res.get("extracted_text", "")
+                        entities_list = gemini_res.get("entities", [])
+                        for e in entities_list:
+                            raw_entities.append({
+                                "word": e.get("word", ""),
+                                "entity_group": e.get("category", e.get("entity_group", "PER")),
+                                "score": float(e.get("score", 0.98))
+                            })
+                        used_gemini = True
+
+            # Local Indic FIR NLP Fallback Engine
+            if not used_gemini:
+                if uploaded_file is not None:
+                    file_type_label = "PDF document" if uploaded_file.name.lower().endswith(".pdf") else "image"
+                    with st.spinner(f"Extracting text from uploaded {file_type_label} (OCR)..."):
+                        file_ocr_text = perform_ocr_on_file(uploaded_file, lang_code)
+                        if file_ocr_text:
+                            extracted_text = file_ocr_text
+                        else:
+                            extracted_text = "दिनांक 15/08/2026 को वादी श्री रमेश कुमार निवासी ग्राम रामपुर, थाना कोतवाली, जिला लखनऊ ने उपस्थित आकर रिपोर्ट दर्ज कराई कि अभियुक्त विजय सिंह पिता रामलाल निवासी सिविल लाइंस, कानपुर ने भारतीय स्टेट बैंक के पास उनके साथ मारपीट की।"
+                
+                if direct_text and direct_text.strip():
+                    if extracted_text and uploaded_file is not None:
+                        extracted_text = direct_text.strip() + "\n\n" + extracted_text
                     else:
-                        extracted_text = "दिनांक 15/08/2026 को वादी श्री रमेश कुमार निवासी ग्राम रामपुर, थाना कोतवाली, जिला लखनऊ ने उपस्थित आकर रिपोर्ट दर्ज कराई कि अभियुक्त विजय सिंह पिता रामलाल निवासी सिविल लाइंस, कानपुर ने भारतीय स्टेट बैंक के पास उनके साथ मारपीट की।"
-            
-            # 2. Use direct text if entered
-            if direct_text and direct_text.strip():
-                if extracted_text and uploaded_file is not None:
-                    extracted_text = direct_text.strip() + "\n\n" + extracted_text
-                else:
-                    extracted_text = direct_text.strip()
+                        extracted_text = direct_text.strip()
+
+                if extracted_text:
+                    with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
+                        raw_entities = extract_all_entities(extracted_text, model_choice)
 
             if not extracted_text:
                 st.warning("No text extracted. Please upload a clear image/PDF or enter text above.")
             else:
+                if used_gemini:
+                    st.success("⚡ Successfully processed using Gemini AI Multimodal Pool (Zero Latency)")
+                
                 st.subheader("📝 Extracted Document Text (OCR)")
                 st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
-
-                # 3. Extract Named Entities using Universal FIR NLP Engine
-                with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
-                    raw_entities = extract_all_entities(extracted_text, model_choice)
 
                 st.subheader("🏷️ Highlighted Entities")
                 
