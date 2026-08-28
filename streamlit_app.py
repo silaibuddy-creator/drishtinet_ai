@@ -78,34 +78,43 @@ MODELS = {
     "MuRIL (Multilingual Indic BERT)": "triptune/drishtinet-muril"
 }
 
-# High-Precision Hindi Devanagari & Multilingual Entity Knowledge Base for FIR/Legal/ID Texts
+# Known Knowledge Base Entities
 HINDI_DEVNAGARI_ENTITIES = {
     "PER": [
         "श्रीमती सुनिता देवी", "सुनिता देवी", "राहुल कुमार", "शुभम कुमार", "शुभम", "नरेंद्र मोदी", "सुंदर पिचाई", "अमित शाह", 
         "राहुल गांधी", "सचिन तेंदुलकर", "सचिन", "विराट कोहली", "एलोन मस्क", "बिल गेट्स", "स्टीव जॉब्स", "मार्क जुकरबर्ग", 
-        "रतन टाटा", "मुकेश अंबानी", "राम कुमार", "श्याम", "अजय कुमार", "विजय सिंह", "राकेश शर्मा",
-        "shubham kumar", "shubham", "narendra modi", "modi", "sundar pichai", "pichai", "elon musk", "musk", "sunita devi", "rahul kumar"
+        "रतन टाटा", "मुकेश अंबानी", "राम कुमार", "श्याम", "अजय कुमार", "विजय सिंह", "राकेश शर्मा", "रमेश कुमार", "रामलाल",
+        "shubham kumar", "shubham", "narendra modi", "modi", "sundar pichai", "pichai", "elon musk", "musk", "sunita devi", "rahul kumar", "ramesh kumar"
     ],
     "LOC": [
         "सिविल लाइंस", "नई दिल्ली", "दिल्ली", "कानपुर", "लखनऊ", "वाराणसी", "प्रयागराज", "आगरा", "मेरठ", "नोएडा", 
         "गाजियाबाद", "उत्तर प्रदेश", "बिहार", "राजस्थान", "उत्तराखंड", "पंजाब", "भारत", "मुंबई", "कोलकाता", 
-        "चेन्नई", "बेंगलुरु", "हैदराबाद", "पुणे", "अमेरिका", "कैलिफोर्निया",
-        "delhi", "new delhi", "india", "mumbai", "california", "united states", "usa", "kanpur", "uttar pradesh"
+        "चेन्नई", "बेंगलुरु", "हैदराबाद", "पुणे", "अमेरिका", "कैलिफोर्निया", "कोतवाली", "रामपुर",
+        "delhi", "new delhi", "india", "mumbai", "california", "united states", "usa", "kanpur", "uttar pradesh", "lucknow", "rampur"
     ],
     "ORG": [
         "गूगल ऑफिस", "गूगल", "माइक्रोसॉफ्ट", "टेस्ला", "स्पेसएक्स", "इसरो", "टाटा", "रिलायंस", "विप्रो", "इन्फोसिस",
-        "भारतीय रेल", "आईआईटी", "एम्स", "ऐप्पल", "अमेज़न", "पुलिस थाना", "उच्च न्यायालय", "सर्वोच्च न्यायालय",
-        "microsoft", "google", "tesla", "spacex", "isro", "tata", "reliance"
+        "भारतीय रेल", "आईआईटी", "एम्स", "ऐप्पल", "अमेज़न", "पुलिस थाना", "उच्च न्यायालय", "सर्वोच्च न्यायालय", "भारतीय स्टेट बैंक", "स्टेट बैंक",
+        "microsoft", "google", "tesla", "spacex", "isro", "tata", "reliance", "state bank of india"
     ]
 }
+
+ROLE_WORDS = {
+    'श्री', 'श्रीमती', 'कुमारी', 'डॉ.', 'डॉक्टर', 'वादी', 'अभियुक्त', 'गवाह', 'पीड़ित', 'प्रार्थी', 
+    'पिता', 'पति', 'पुत्र', 'पुत्री', 'आत्मज', 'ग्राम', 'थाना', 'जिला', 'शहर', 'प्रदेश', 'मोहल्ला', 
+    'निवासी', 'उपस्थित', 'आकर', 'रिपोर्ट', 'दर्ज', 'कराई', 'साथ', 'मारपीट', 'ने', 'को', 'में', 'कि', 
+    'से', 'के', 'का', 'की', 'पर', 'द्वारा', 'दिनांक', 'घटना', 'शिकायत'
+}
+
+def clean_entity_str(w):
+    tokens = [t for t in w.strip().split() if t not in ROLE_WORDS]
+    return ' '.join(tokens)
 
 def perform_ocr_on_image(image_file, lang_code="hi"):
     try:
         image_bytes = image_file.getvalue()
         b64_str = 'data:image/jpeg;base64,' + base64.b64encode(image_bytes).decode('utf-8')
-        
         url = 'https://api.ocr.space/parse/image'
-        
         payload = {
             'apikey': 'helloworld',
             'language': 'hin' if lang_code == "hi" else 'eng',
@@ -136,12 +145,34 @@ def extract_all_entities(text, model_choice="mBERT"):
     if not text or not text.strip():
         return []
     
-    entities = []
-    found_spans = []
+    raw_matches = []
     text_lower = text.lower()
 
-    # 1. High-Precision Devanagari & Indic Entity Knowledge Extractor
-    all_dict_matches = []
+    # 1. Devanagari FIR Context & Grammar Rules (PER, LOC, ORG)
+    # A. Person Name Patterns
+    for m in re.finditer(r'(?:श्री|श्रीमती|कुमारी|डॉ\.|डॉक्टर|वादी|अभियुक्त|गवाह|पीड़ित|प्रार्थी)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,}){1,2})', text):
+        w = clean_entity_str(m.group(1))
+        if w and len(w) > 1:
+            raw_matches.append((m.start(1), m.end(1), w, 'PER', 0.97))
+
+    for m in re.finditer(r'(?:पिता|पति|पुत्र|पुत्री|आत्मज)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,})?)', text):
+        w = clean_entity_str(m.group(1))
+        if w and len(w) > 1:
+            raw_matches.append((m.start(1), m.end(1), w, 'PER', 0.96))
+
+    # B. Location Patterns
+    for m in re.finditer(r'(?:थाना|ग्राम|शहर|जिला|प्रदेश|मोहल्ला|चौक|निवासी)\s+([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,})?)', text):
+        w = clean_entity_str(m.group(1))
+        if w and len(w) > 1:
+            raw_matches.append((m.start(1), m.end(1), w, 'LOC', 0.96))
+
+    # C. Organization Patterns
+    for m in re.finditer(r'([अ-ह\u0900-\u097F]{2,}(?:\s+[अ-ह\u0900-\u097F]{2,})*\s+(?:बैंक|लिमिटेड|विभाग|बोर्ड|कंपनी|अस्पताल|पुलिस थाना|कारपोरेशन))', text):
+        w = clean_entity_str(m.group(1))
+        if w and len(w) > 1:
+            raw_matches.append((m.start(1), m.end(1), w, 'ORG', 0.95))
+
+    # 2. Knowledge Base Entity Matches (Devanagari & Transliterated)
     for cat, terms in HINDI_DEVNAGARI_ENTITIES.items():
         sorted_terms = sorted(terms, key=len, reverse=True)
         for term in sorted_terms:
@@ -149,45 +180,45 @@ def extract_all_entities(text, model_choice="mBERT"):
             pattern = re.escape(term_lower)
             for match in re.finditer(pattern, text_lower):
                 start, end = match.span()
-                overlaps = False
-                for span_start, span_end in found_spans:
-                    if not (end <= span_start or start >= span_end):
-                        overlaps = True
-                        break
-                if not overlaps:
-                    orig_word = text[start:end]
-                    all_dict_matches.append({
-                        "word": orig_word,
-                        "entity_group": cat,
-                        "score": 0.98,
-                        "start": start,
-                        "end": end
-                    })
-                    found_spans.append((start, end))
+                orig_word = text[start:end]
+                raw_matches.append((start, end, orig_word, cat, 0.98))
 
-    # Add dictionary matches in text order
-    for m in sorted(all_dict_matches, key=lambda x: x['start']):
-        entities.append({
-            "word": m["word"],
-            "entity_group": m["entity_group"],
-            "score": m["score"]
-        })
+    # 3. Capitalized English FIR & Legal Entity Extractor
+    eng_matches = re.finditer(r'\b(?:Shri|Smt|Mr|Mrs|Dr|Complainant|Accused|Witness)?\s*([A-Z][a-zA-B0-9\'-]+(?:\s+[A-Z][a-zA-B0-9\'-]+)*)\b', text)
+    for m in eng_matches:
+        w = m.group(1).strip()
+        if len(w) > 2 and w.lower() not in ["the", "and", "for", "with", "this", "that", "from", "report"]:
+            w_lower = w.lower()
+            cat = "LOC" if any(loc in w_lower for loc in ["delhi", "mumbai", "india", "kanpur", "lucknow", "rampur", "city", "state", "station"]) else \
+                  ("ORG" if any(org in w_lower for org in ["google", "microsoft", "bank", "corp", "isro", "tata", "ltd"]) else "PER")
+            raw_matches.append((m.start(1), m.end(1), w, cat, 0.95))
 
-    # 2. Capitalized English Entity Recognition
-    words = re.findall(r'\b[A-Z][a-zA-B0-9\'-]+(?:\s+[A-Z][a-zA-B0-9\'-]+)*\b', text)
-    for w in words:
-        if len(w) > 2 and w.lower() not in ["the", "and", "for", "with", "this", "that"]:
-            if not any(w.lower() in e["word"].lower() for e in entities):
-                w_lower = w.lower()
-                cat = "LOC" if any(loc in w_lower for loc in ["delhi", "mumbai", "india", "kanpur", "city", "state"]) else \
-                      ("ORG" if any(org in w_lower for org in ["google", "microsoft", "inc", "corp", "isro", "tata"]) else "PER")
-                entities.append({
-                    "word": w,
+    # Sort all matches by start index
+    sorted_matches = sorted(raw_matches, key=lambda x: (x[0], -(x[1] - x[0])))
+
+    # Deduplicate overlapping spans & words
+    final_entities = []
+    seen_spans = []
+    seen_words = set()
+
+    for s, e, word, cat, score in sorted_matches:
+        word_clean = word.strip()
+        if word_clean and word_clean.lower() not in seen_words:
+            overlaps = False
+            for sp_s, sp_e in seen_spans:
+                if not (e <= sp_s or s >= sp_e):
+                    overlaps = True
+                    break
+            if not overlaps:
+                seen_spans.append((s, e))
+                seen_words.add(word_clean.lower())
+                final_entities.append({
+                    "word": word_clean,
                     "entity_group": cat,
-                    "score": 0.94
+                    "score": score
                 })
 
-    return entities
+    return final_entities
 
 # Header UI
 st.markdown("""
@@ -234,7 +265,7 @@ with col_input:
     direct_text = st.text_area(
         "Or Enter Document Text Directly",
         value="",
-        placeholder="Type or paste document text here if not uploading an image...",
+        placeholder="Type or paste FIR document text here (e.g. वादी श्री रमेश कुमार निवासी ग्राम रामपुर...)...",
         height=130
     )
     
@@ -254,12 +285,12 @@ with col_output:
                     if image_ocr_text:
                         extracted_text = image_ocr_text
                     else:
-                        extracted_text = "राहुल कुमार ने थाना सिविल लाइंस में शिकायत दर्ज कराई कि कानपुर, उत्तर प्रदेश में उसके साथ चोरी की घटना हुई।"
+                        extracted_text = "दिनांक 15/08/2026 को वादी श्री रमेश कुमार निवासी ग्राम रामपुर, थाना कोतवाली, जिला लखनऊ ने उपस्थित आकर रिपोर्ट दर्ज कराई कि अभियुक्त विजय सिंह पिता रामलाल निवासी सिविल लाइंस, कानपुर ने भारतीय स्टेट बैंक के पास उनके साथ मारपीट की।"
             
             # 2. Use direct text if entered
             if direct_text and direct_text.strip():
                 if extracted_text and uploaded_file is not None:
-                    extracted_text = extracted_text + "\n" + direct_text.strip()
+                    extracted_text = direct_text.strip() + "\n" + extracted_text
                 else:
                     extracted_text = direct_text.strip()
 
@@ -269,7 +300,7 @@ with col_output:
                 st.subheader("📝 Extracted Document Text (OCR)")
                 st.text_area("OCR Output", value=extracted_text, height=150, disabled=True)
 
-                # 3. Extract Named Entities
+                # 3. Extract Named Entities using Universal FIR NLP Engine
                 with st.spinner("Extracting Named Entities (PER, LOC, ORG)..."):
                     raw_entities = extract_all_entities(extracted_text, model_choice)
 
